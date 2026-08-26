@@ -17,11 +17,15 @@ export class ProductsService {
   }
 
   async findAll(paginationDto: PaginationDto) {
+    const activeProductWhere = { available: true };
     const { page = 1, limit = 10 } = paginationDto;
-    const total = await this.prisma.product.count();
+    const total = await this.prisma.product.count({
+      where: activeProductWhere,
+    });
     const lastPage = Math.ceil(total / limit);
 
     const data = await this.prisma.product.findMany({
+      where: activeProductWhere,
       skip: (page - 1) * limit,
       take: limit,
     });
@@ -37,7 +41,7 @@ export class ProductsService {
 
   async findOne(id: number) {
     const product = await this.prisma.product.findUnique({
-      where: { id },
+      where: { id, available: true },
     });
 
     if (!product) {
@@ -60,7 +64,11 @@ export class ProductsService {
 
   async remove(id: number) {
     await this.findOne(id);
-    const product = await this.prisma.product.delete({ where: { id } });
+    const product = await this.prisma.product.update({
+      where: { id },
+      data: { available: false },
+    });
+    // const product = await this.prisma.product.delete({ where: { id } });
     return product;
   }
 }
