@@ -3,6 +3,9 @@
 /node_modules
 /build
 
+# TypeScript
+*.tsbuildinfo
+
 # Logs
 logs
 *.log
@@ -54,9 +57,13 @@ pids
 
 # Diagnostic reports (https://nodejs.org/api/report.html)
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+
+# AI / coding agents
 /.agents/
 /.claude/
 /.cursor/
 /.devin/
 /.windsurf/
+
+# Prisma generated
 /src/generated/prisma
