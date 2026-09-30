@@ -1,24 +1,13 @@
 # Products Microservice
 
-A NestJS microservice for managing products over TCP. It uses Prisma ORM with SQLite for persistence and supports product creation, pagination, retrieval, updates, and soft deletion.
+NestJS microservice that manages products over TCP. It uses Prisma ORM 7 with SQLite and supports creation, paginated reads, updates, product validation, and soft deletion. It does not expose an HTTP API.
 
-## Tech Stack
-
-- Node.js
-- NestJS
-- TypeScript
-- TCP transport
-- Prisma ORM
-- SQLite
-- Class Validator
-- Jest
-
-## Prerequisites
+## Requirements
 
 - Node.js 20 or later
 - npm
 
-## Installation
+## Setup
 
 ```bash
 git clone https://github.com/Nest-Microservices-h/products-ms-h.git
@@ -26,149 +15,130 @@ cd products-ms-h
 npm install
 ```
 
-Create a `.env` file based on `.env.template`:
+Create the local environment file from the supplied template:
+
+```bash
+cp .env.template .env
+```
+
+On PowerShell, use `Copy-Item .env.template .env` instead. The template contains:
 
 ```env
 PORT=3001
 DATABASE_URL="file:./dev.db"
 ```
 
-`PORT` is the TCP port used by the microservice. `DATABASE_URL` points to the SQLite database used by Prisma.
+`PORT` is required and selects the TCP port. `DATABASE_URL` is required by Prisma CLI and the SQLite driver; change it to use a different database file.
 
-## Database Setup
+## Database
 
-Apply the existing migrations with:
+Apply the checked-in migrations to the configured database and generate the Prisma client:
 
 ```bash
 npx prisma migrate dev
-```
-
-Generate the Prisma client when required:
-
-```bash
 npx prisma generate
 ```
 
-## Running the Microservice
+Run `npx prisma generate` again after changing `prisma/schema.prisma`. In deployed environments, apply committed migrations with `npx prisma migrate deploy` instead of `migrate dev`.
+
+## Run
 
 ```bash
-# Development with watch mode
+# Development with file watching
 npm run start:dev
 
-# Standard development run
-npm run start
-
-# Production
+# Build and run the production output
 npm run build
 npm run start:prod
 ```
 
-The service starts as a TCP microservice on the port configured by `PORT`. It does not expose REST or HTTP endpoints.
+The service listens on the configured TCP port (3001 by default). Run a TCP client separately to send requests.
 
-## Message Patterns
+## TCP API
 
-The products controller handles these TCP message patterns:
-
-| Pattern             | Description                             |
-| ------------------- | --------------------------------------- |
-| `create-product`    | Creates a product                       |
-| `find-all-products` | Returns active products with pagination |
-| `find-one-product`  | Returns an active product by ID         |
-| `update-product`    | Updates an active product               |
-| `remove-product`    | Soft-deletes a product                  |
-
-Example client configuration:
+Each request uses a Nest message pattern with a `{ cmd: string }` key. The following examples use `ClientProxy` from `@nestjs/microservices`:
 
 ```ts
-ClientProxyFactory.create({
+import { ClientProxyFactory, Transport } from '@nestjs/microservices';
+import { firstValueFrom } from 'rxjs';
+
+const client = ClientProxyFactory.create({
   transport: Transport.TCP,
-  options: {
-    port: 3001,
-  },
+  options: { port: 3001 },
 });
-```
 
-Example request:
-
-```ts
-client.send(
-  { cmd: 'create-product' },
-  {
-    name: 'Keyboard',
-    price: 49.99,
-  },
+const product = await firstValueFrom(
+  client.send({ cmd: 'create-product' }, { name: 'Keyboard', price: 49.99 }),
 );
+
+await client.close();
 ```
 
-## Product Model
+| Pattern             | Payload                                         | Behavior                                                                                                             |
+| ------------------- | ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `create-product`    | `{ name: string, price: number }`               | Creates an available product. Names must be unique; price must be non-negative and have at most four decimal places. |
+| `find-all-products` | `{ page?: number, limit?: number }`             | Returns available products; both values must be positive. Defaults are `page: 1` and `limit: 10`.                    |
+| `find-one-product`  | `{ id: number }`                                | Returns one available product.                                                                                       |
+| `update-product`    | `{ id: number, name?: string, price?: number }` | Updates the supplied fields of an available product.                                                                 |
+| `remove-product`    | `{ id: number }`                                | Marks the product unavailable; it does not delete the row.                                                           |
+| `validate-products` | `number[]`                                      | Returns products matching all supplied IDs, or raises an RPC error if any ID is missing.                             |
 
-| Field       | Type       | Description                 |
-| ----------- | ---------- | --------------------------- |
-| `id`        | `number`   | Auto-incremented identifier |
-| `name`      | `string`   | Unique product name         |
-| `price`     | `number`   | Product price               |
-| `available` | `boolean`  | Product availability status |
-| `createdAt` | `DateTime` | Creation timestamp          |
-| `updatedAt` | `DateTime` | Last update timestamp       |
-
-Only available products are returned by read operations. Products are soft-deleted by setting `available` to `false` instead of removing the database record.
-
-## Validation and Pagination
-
-Global validation is enabled with whitelisting and rejection of non-whitelisted properties. Product and pagination payloads are validated through DTOs.
-
-The `find-all-products` pattern accepts the following optional payload fields:
+The `find-all-products` response has this shape:
 
 ```ts
 {
-  page?: number;  // defaults to 1
-  limit?: number; // defaults to 10
+  data: Product[];
+  meta: {
+    total: number;
+    page: number;
+    lastPage: number;
+  };
 }
 ```
 
-The response includes the product data and pagination metadata: `total`, `page`, and `lastPage`.
+Read operations exclude unavailable products. A product's `name` is unique across the database, including unavailable products, so soft-deleting a product does not free its name for reuse.
 
-## Testing
+## Product Fields
+
+| Field       | Type       | Notes                                                |
+| ----------- | ---------- | ---------------------------------------------------- |
+| `id`        | `number`   | Auto-incremented identifier.                         |
+| `name`      | `string`   | Required and unique.                                 |
+| `price`     | `number`   | Required; non-negative, up to four decimal places.   |
+| `available` | `boolean`  | Defaults to `true`; set to `false` on soft deletion. |
+| `createdAt` | `DateTime` | Set when the record is created.                      |
+| `updatedAt` | `DateTime` | Updated when the record changes.                     |
+
+Global validation rejects properties not declared by the request DTOs.
+
+## Tests and Quality
 
 ```bash
-# Unit tests
-npm run test
-
-# Watch mode
+npm test
 npm run test:watch
-
-# Coverage
 npm run test:cov
-
-# End-to-end tests
-npm run test:e2e
-```
-
-## Code Quality
-
-```bash
-# Format source and test files
-npm run format
-
-# Lint and automatically fix issues
 npm run lint
+npm run format
 ```
 
-## Project Structure
+No unit spec files are currently checked in, so the Jest unit-test commands have no service tests to run yet.
+
+`npm run test:e2e` is configured, but the current e2e test is Nest's generated HTTP `Hello World` test. It does not exercise this TCP microservice and should not be treated as a passing service-level e2e test until replaced with a TCP test.
+
+## Project Layout
 
 ```text
 src/
-├── common/       # Shared DTOs and utilities
-├── config/       # Environment configuration and validation
-├── generated/    # Generated Prisma client
-├── lib/          # Shared infrastructure services
-└── products/     # Product module, controller, service, DTOs, and entities
-
+  common/       Shared DTOs
+  config/       Environment validation
+  generated/    Generated Prisma client
+  lib/          Prisma service
+  products/     Product TCP controller, service, DTOs, and entity
 prisma/
-├── migrations/   # Database migrations
-└── schema.prisma # Prisma data model
+  migrations/   Database migrations
+  schema.prisma Prisma data model
 ```
 
 ## License
 
-This project is private and currently does not define a public license.
+This repository is private and currently does not define a public license.
